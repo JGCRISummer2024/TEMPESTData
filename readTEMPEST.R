@@ -76,3 +76,4 @@ lines(BoundedFilteredDevicesDataF$TIMESTAMP, BoundedFilteredDevicesDataF$Value, 
 #plot(BoundedFilteredDevicesDataC$TIMESTAMP, BoundedFilteredDevicesDataS$Value, type="l", main="Line Graph", xlab="Time", ylab="Sapflow")
 #plot(BoundedFilteredDevicesDataF$TIMESTAMP, BoundedFilteredDevicesDataF$Value, type="l", main="Line Graph", xlab="Time", ylab="Sapflow")
 #ggplot(BoundedFilteredDevicesDataF, aes(x = TIMESTAMP, y = Value)) + geom_line() + geom_point() + labs(title = "Line Graph of F between 0 and 1 Device 15", x = "Time", y = "sap flow") + theme_minimal()
+
