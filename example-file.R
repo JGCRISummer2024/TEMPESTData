@@ -5,35 +5,42 @@ library(readr)
 library(dplyr)
 library(lubridate)
 
+#### Read data and daytime means ####
+
+# Find all the June 2022 TEMPEST and weather station files
 june_files <- list.files("data/", pattern = "20220601", full.names = TRUE)
 june_files <- june_files[grep("csv$", june_files)]
-
+# ...and read them in
 dat <- lapply(june_files, read_csv, col_types = "ccTccccdccii")
+
 dat %>% 
   bind_rows() %>% 
   # drop any out-of-bounds observations
   replace_na(list(F_OOB = 0)) %>% 
   filter(F_OOB == 0) %>% 
+  # isolate the variables we want
   filter(research_name %in% c("sapflow_2.5cm", 
                               "soil_vwc_15cm",
                               "wx_par_den15", 
                               "wx_tempavg15",
                               "wx_windspeed15")) %>% 
-  # KJ code!
   # daytime is sunrise to sunset 6:00AM to 9:00PM
   mutate(day = date(TIMESTAMP), 
-         time = hms::as_hms(TIMESTAMP), #extract day and time
+         time = hms::as_hms(TIMESTAMP), # extract day and time
          daytime = time >= hms("06:00:00") & time <= hms("21:00:00")) %>% 
   filter(daytime) %>%
   # compute mean daytime values
-  group_by(day, Sensor_ID, research_name) %>% #add the sensor ID, then we get the NA issue
+  group_by(day, Sensor_ID, research_name) %>%
   summarize(value = mean(Value), .groups = "drop") -> 
   data_daily
 
+# Diagnostic plot to ensure things look good
 library(ggplot2)
 p <- ggplot(data_daily, aes(day, value)) + geom_point() + 
   facet_wrap(~research_name, scales = "free")
 print(p)
+
+#### Reshaping data ####
 
 # Compute daily averages for all the non-sapflow data
 data_daily %>% 
@@ -49,18 +56,18 @@ data_daily %>%
   filter(research_name == "sapflow_2.5cm") %>% 
   select(-research_name) %>% 
   rename(sapflow_2.5cm = value) %>% 
-  # merge with the driver variables computed above
+  # ...and merge with the driver variable averages computed above
   left_join(dd_drivers, by = "day") ->
   dd_sf
 
-# We need to know what trees correspond to which species
+# We need to know what trees correspond to which species;
+# the sapflux-species-mapping file has this information
 species <- read_csv("metadata/sapflux-species-mapping.csv")
-
 dd_sf %>% 
   left_join(species, by = c("Sensor_ID" = "Sapflux_ID")) ->
   dd_sf
 
-# WE ARE READY TO BUILD A PREDICTIVE MODEL
+#### Predictive models ####
 
 mod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
             wx_par_den15 * Species + 
