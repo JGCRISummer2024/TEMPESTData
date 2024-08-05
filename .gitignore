@@ -53,3 +53,8 @@ data/*
 
 # OS files
 .DS_Store
+
+# Saved plots
+*.png
+*.pdf
+
