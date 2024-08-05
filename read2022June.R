@@ -115,6 +115,9 @@ summary(lstmmodel)
 
 write.csv(dfCSFFinal, file = "wideCSFdataFinal.csv")
 
+
+
+#Reading raw TEMPEST Data
 tempestDf <- read_csv("C:\\Users\\jung708\\OneDrive - PNNL\\Documents\\GitHub\\TEMPESTData\\TMP_F_20220601-20220630_L1_v1-0.csv")
 weatherDf <- read_csv("C:\\Users\\jung708\\OneDrive - PNNL\\Documents\\GitHub\\TEMPESTData\\GCW_W_20220601-20220630_L1_v1-0.csv")
 

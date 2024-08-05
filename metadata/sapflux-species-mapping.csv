@@ -2,6 +2,7 @@ Plot,Sapflux_ID,Tree_ID,Species,Grid_Square
 Control,C7,1439,ACRU,B3
 Control,C19,1451,ACRU,A1
 Control,C10,1387,ACRU,D4
+Control,C8,,ACRU,C4
 Control,C11,1395,ACRU,F2
 Control,C16,1390,FAGR,E4
 Control,C18,1452,FAGR,NA
