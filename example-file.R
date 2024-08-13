@@ -4,6 +4,7 @@
 library(readr)
 library(dplyr)
 library(lubridate)
+library(tidyr)
 
 #### Read data and daytime means ####
 
@@ -25,7 +26,7 @@ dat %>%
                               "wx_par_den15", 
                               "wx_tempavg15",
                               "wx_windspeed15")) %>% 
-
+  
   # KJ code!
   # daytime is sunrise to sunset 6:00AM to 9:00PM
   mutate(day = date(TIMESTAMP), 
@@ -34,7 +35,8 @@ dat %>%
   filter(daytime) %>%
   # compute mean daytime values
   group_by(day, Sensor_ID, research_name) %>%
-  summarize(value = mean(Value), .groups = "drop") -> 
+  summarize(value = mean(Value), .groups = "drop") %>% 
+  filter(value > 0) -> 
   data_daily
 
 # Diagnostic plot to ensure things look good
@@ -69,15 +71,25 @@ data_daily %>%
 species <- read_csv("metadata/sapflux-species-mapping.csv")
 
 dd_sf %>% 
-  left_join(species, by = c("Sensor_ID" = "Sapflux_ID")) ->
+  left_join(species, by = c("Sensor_ID" = "Sapflux_ID")) %>% 
+  filter(!is.na(DBH_2021)) %>%
+  # water supply to the canopy is through the "sapwood", which is a function
+  # of diameter squared
+  mutate(BA = DBH_2021 ^ 2) ->
   dd_sf
 
 #### Predictive models ####
 
-mod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
-            wx_par_den15 * Species + 
-            wx_tempavg15 + 
-            wx_windspeed15, data = dd_sf)
+# Overall model
+# We use stats::step() to performance stepwise removal of non-significant terms
+mod <- step(
+  lm(sapflow_2.5cm ~ (soil_vwc_15cm + 
+                        wx_par_den15 * Species + 
+                        wx_tempavg15 + 
+                        wx_windspeed15) *
+       (BA + Species), 
+     data = dd_sf),
+  direction = "both")
 print(summary(mod))
 
 
@@ -87,7 +99,7 @@ print(summary(mod))
 
 # Use a variable number of trees to predict the others
 n_training <- 9
-
+results <- list()
 for(sp in unique(dd_sf$Species)) {
   dat_species <- dd_sf %>% filter(Species == sp)
   
@@ -97,152 +109,46 @@ for(sp in unique(dd_sf$Species)) {
   training_data <- dat_species %>% filter(Sensor_ID %in% training_trees)
   validation_data <- dat_species %>% filter(!Sensor_ID %in% training_trees)
   
-  
-  # Fit a model to the training data
-  limod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
-                wx_par_den15 + 
-                wx_tempavg15 + 
-                wx_windspeed15, data = training_data)
+  # Fit a linear model to the training data
+  limod <- step(
+    lm(sapflow_2.5cm ~ (soil_vwc_15cm + 
+                          wx_par_den15 + 
+                          wx_tempavg15 + 
+                          wx_windspeed15) * 
+         BA, 
+       data = training_data), direction = "both")
   summary(limod)
   # Predict sapflow for the validation data
   validation_data$predicted_sapflow <- predict(limod, newdata = validation_data)
   
-  #performance metrics
+  # Performance metrics
   # Calculate Mean Absolute Error (MAE)
-  mae <- mean(abs(validation_data$sapflow_2.5cm - validation_data$predicted_sapflow))
+  mae <- mean(abs(validation_data$sapflow_2.5cm - validation_data$predicted_sapflow), na.rm = TRUE)
   
   # Calculate R-squared (R²)
-  ss_total <- sum((validation_data$sapflow_2.5cm - mean(validation_data$sapflow_2.5cm))^2)
-  ss_residual <- sum((validation_data$sapflow_2.5cm - validation_data$predicted_sapflow)^2)
-  r_squared <- 1 - (ss_residual / ss_total)
-  
+  r_squared <- summary(lm(predicted_sapflow ~ sapflow_2.5cm, data = validation_data))$adj.r.squared
   
   # Plot the actual vs predicted sapflow
-  ggplot(validation_data, aes(x = day, group=Sensor_ID)) +
+  p <- ggplot(validation_data, aes(x = day, group=Sensor_ID)) +
     geom_line(aes(y = sapflow_2.5cm, color = "Actual")) +
     geom_line(aes(y = predicted_sapflow, color = "Predicted")) +
     labs(title = paste("Actual vs Predicted Sapflow for Species:", sp),
-    #labs(title = paste("Actual vs Predicted Sapflow"),
+         #labs(title = paste("Actual vs Predicted Sapflow"),
          x = "Day",
          y = "Sapflow (2.5cm)",
          color = "Legend") +
     theme_minimal()
+  print(p)
   
-}
-#-------------------------------------------------------------------
-#Get each species one by one
-
-#ACRU
-dat_species <- dd_sf %>% filter(Species == "ACRU")
-#Separate the species-specific data into training and validation 
-trees <- unique(dat_species$Sensor_ID)
-
-training_trees <- sample(trees, n_training, replace = FALSE)
-training_data <- dd_sf %>% filter(Sensor_ID %in% training_trees)
-validation_data <- dd_sf %>% filter(!Sensor_ID %in% training_trees)
-
-
-# Fit a model to the training data
-limod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
-              wx_par_den15 + 
-              wx_tempavg15 + 
-              wx_windspeed15, data = training_data)
-summary(limod)
-# Predict sapflow for the validation data
-validation_data$predicted_sapflow <- predict(limod, newdata = validation_data)
-
-# Calculate Mean Absolute Error (MAE)
-mae <- mean(abs(validation_data$sapflow_2.5cm - validation_data$predicted_sapflow))
-
-# Calculate R-squared (R²)
-ss_total <- sum((validation_data$sapflow_2.5cm - mean(validation_data$sapflow_2.5cm))^2)
-ss_residual <- sum((validation_data$sapflow_2.5cm - validation_data$predicted_sapflow)^2)
-r_squared <- 1 - (ss_residual / ss_total)
-
-# Print the accuracy metrics
-print("ACRU")
-print(paste("Mean Absolute Error (MAE):", round(mae, 2)))
-print(paste("R-squared (R²):", round(r_squared, 2)))
-
-# Plot the actual vs predicted sapflow
-ggplot(validation_data, aes(x = day)) +
-  geom_line(aes(y = sapflow_2.5cm, color = "Actual")) +
-  geom_line(aes(y = predicted_sapflow, color = "Predicted")) +
-  labs(title = paste("Actual vs Predicted Sapflow for Species: ACRU"),
-       #labs(title = paste("Actual vs Predicted Sapflow"),
-       x = "Day",
-       y = "Sapflow (2.5cm)",
-       color = "Legend") + theme_minimal()
-
-
-
-#FAGR
-dat_species <- dd_sf %>% filter(Species == "FAGR")
-#Separate the species-specific data into training and validation 
-trees <- unique(dat_species$Sensor_ID)
-
-training_trees <- sample(trees, n_training, replace = FALSE)
-training_data <- dd_sf %>% filter(Sensor_ID %in% training_trees)
-validation_data <- dd_sf %>% filter(!Sensor_ID %in% training_trees)
-
-
-# Fit a model to the training data
-limod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
-              wx_par_den15 + 
-              wx_tempavg15 + 
-              wx_windspeed15, data = training_data)
-summary(limod)
-# Predict sapflow for the validation data
-validation_data$predicted_sapflow <- predict(limod, newdata = validation_data)
-
-# Plot the actual vs predicted sapflow
-ggplot(validation_data, aes(x = day)) +
-  geom_line(aes(y = sapflow_2.5cm, color = "Actual")) +
-  geom_line(aes(y = predicted_sapflow, color = "Predicted")) +
-  labs(title = paste("Actual vs Predicted Sapflow for Species: FAGR"),
-       #labs(title = paste("Actual vs Predicted Sapflow"),
-       x = "Day",
-       y = "Sapflow (2.5cm)",
-       color = "Legend") + theme_minimal()
-
-
-#LITU
-dat_species <- dd_sf %>% filter(Species == "LITU")
-#Separate the species-specific data into training and validation 
-trees <- unique(dat_species$Sensor_ID)
-
-training_trees <- sample(trees, n_training, replace = FALSE)
-training_data <- dd_sf %>% filter(Sensor_ID %in% training_trees)
-validation_data <- dd_sf %>% filter(!Sensor_ID %in% training_trees)
-
-
-# Fit a model to the training data
-limod <- lm(sapflow_2.5cm ~ soil_vwc_15cm + 
-              wx_par_den15 + 
-              wx_tempavg15 + 
-              wx_windspeed15, data = training_data)
-summary(limod)
-# Predict sapflow for the validation data
-validation_data$predicted_sapflow <- predict(limod, newdata = validation_data)
-
-# Plot the actual vs predicted sapflow
-ggplot(validation_data, aes(x = day)) +
-  geom_line(aes(y = sapflow_2.5cm, color = "Actual")) +
-  geom_line(aes(y = predicted_sapflow, color = "Predicted")) +
-  labs(title = paste("Actual vs Predicted Sapflow for Species: LITU"),
-       #labs(title = paste("Actual vs Predicted Sapflow"),
-       x = "Day",
-       y = "Sapflow (2.5cm)",
-       color = "Legend") + theme_minimal()
-
-
-
-#Time for an LSTM Model
-=======
-  # Fit a model to the training data
-  # Predict sapflow for the validation data
-  # Plot!
+  results[[sp]] <- tibble(
+    Model_R2 = summary(limod)$adj.r.squared,
+    Pred_mae = mae,
+    Pred_R2 = r_squared,
+    Model_terms = paste(names(limod$coefficients), collapse = ", ")
+  )
 }
 
-message("All done!")
->>>>>>> db1b0ba44f081368f891065b3ed40c5f8792f145
+# Bring all the results together into a single data frame
+results <- bind_rows(results, .id = "Species")
+message("All done:")
+print(results)
