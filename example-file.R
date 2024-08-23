@@ -129,6 +129,8 @@ dd_sf %>%
   mutate(BA = DBH_2021 ^ 2) ->
   dd_sf
 
+write.csv(dd_sf, file = "data_model_08132024.csv")
+
 #### Predictive models ####
 
 # Overall model
